@@ -1,7 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Play, Terminal, Sparkles, AlertCircle, RefreshCw, FileCode } from 'lucide-react';
+import { X, Play, Terminal, Sparkles, AlertCircle, RefreshCw, FileCode, Upload } from 'lucide-react';
 import { PRESET_COMPOSE_TEMPLATES, ComposeTemplate } from './types';
 import { api } from '../../api';
+
+const MAX_COMPOSE_FILE_BYTES = 8 * 1024 * 1024;
+
+const suggestProjectNameFromFile = (fileName: string) => {
+  const baseName = fileName.replace(/\.(ya?ml)$/i, '').trim();
+  if (!baseName || /^(docker-)?compose$/i.test(baseName)) return '';
+
+  return baseName
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+};
 
 interface ComposeDeployModalProps {
   isOpen: boolean;
@@ -26,6 +38,9 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
   const [deploying, setDeploying] = useState(false);
   const [logs, setLogs] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [importedFileName, setImportedFileName] = useState<string | null>(null);
+  const [isDropActive, setIsDropActive] = useState(false);
+  const composeFileInputRef = useRef<HTMLInputElement | null>(null);
   const logOutputRef = useRef<HTMLPreElement | null>(null);
   const deployAbortRef = useRef<AbortController | null>(null);
 
@@ -43,6 +58,8 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
     }
     setLogs('');
     setErrorMsg(null);
+    setImportedFileName(null);
+    setIsDropActive(false);
   }, [initialProject, isOpen]);
 
   useEffect(() => {
@@ -57,10 +74,57 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
 
   const handleSelectTemplate = (tpl: ComposeTemplate) => {
     setSelectedTemplate(tpl.id);
+    setImportedFileName(null);
     if (!initialProject) {
       setProjectName(tpl.defaultProjectName);
     }
     setYamlContent(tpl.yaml);
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file || deploying) return;
+
+    if (!/\.(ya?ml)$/i.test(file.name)) {
+      setErrorMsg('请选择 .yml 或 .yaml 格式的 Docker Compose 文件');
+      return;
+    }
+    if (file.size > MAX_COMPOSE_FILE_BYTES) {
+      setErrorMsg('Compose 配置文件不能超过 8 MB');
+      return;
+    }
+
+    try {
+      const content = await file.text();
+      if (!content.trim()) {
+        setErrorMsg('导入的 Compose 配置文件为空');
+        return;
+      }
+
+      setYamlContent(content);
+      setSelectedTemplate('');
+      setImportedFileName(file.name);
+      setErrorMsg(null);
+
+      const selectedPreset = PRESET_COMPOSE_TEMPLATES.find(tpl => tpl.id === selectedTemplate);
+      const hasPresetProjectName = selectedPreset?.defaultProjectName === projectName;
+      if (!initialProject && (!projectName.trim() || hasPresetProjectName)) {
+        setProjectName(suggestProjectNameFromFile(file.name));
+      }
+    } catch {
+      setErrorMsg(`读取 ${file.name} 失败，请重试`);
+    }
+  };
+
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = '';
+    void handleImportFile(file);
+  };
+
+  const handleComposeDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDropActive(false);
+    void handleImportFile(event.dataTransfer.files?.[0] || null);
   };
 
   const handleDeploy = async () => {
@@ -117,7 +181,7 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
                 {initialProject ? `编辑：${initialProject.name}` : '部署 Compose 项目'}
               </h3>
               <p className="hidden text-xs text-slate-400 sm:block">
-                编辑 YAML 配置或选择服务模板
+                编辑、导入 YAML 配置或选择服务模板
               </p>
             </div>
           </div>
@@ -137,7 +201,7 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
           {/* Main Area: Inputs & Editor */}
           <div className={`flex min-h-0 flex-col space-y-4 p-3 sm:p-5 lg:flex-1 lg:overflow-y-auto lg:border-r lg:border-slate-800/80 ${initialProject ? 'flex-1' : ''}`}>
             {errorMsg && (
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center space-x-2">
+              <div className="flex items-center space-x-2 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-600 dark:text-rose-300">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{errorMsg}</span>
               </div>
@@ -163,21 +227,63 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
 
             {/* Compose YAML Editor */}
             <div className={`flex min-h-[430px] flex-col lg:min-h-[320px] lg:flex-1 ${initialProject ? 'flex-1' : ''}`}>
-              <div className="flex items-center justify-between pb-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5">
                 <label className="flex items-center space-x-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
                   <span>Compose 配置</span>
                 </label>
-                <span className="font-mono text-[10px] text-slate-500">docker-compose.yml</span>
+                <div className="flex items-center gap-2">
+                  {importedFileName && (
+                    <span className="max-w-36 truncate rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-300" title={importedFileName}>
+                      已导入 {importedFileName}
+                    </span>
+                  )}
+                  <input
+                    ref={composeFileInputRef}
+                    type="file"
+                    accept=".yml,.yaml,text/yaml,application/x-yaml"
+                    onChange={handleFileInputChange}
+                    disabled={deploying}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => composeFileInputRef.current?.click()}
+                    disabled={deploying}
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 text-[11px] font-semibold text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300 dark:hover:bg-indigo-500/20"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>导入文件</span>
+                  </button>
+                  <span className="hidden font-mono text-[10px] text-slate-500 sm:inline">docker-compose.yml</span>
+                </div>
               </div>
 
-              <div className="terminal-dark-preserve relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[#06090e]">
+              <div
+                onDragEnter={event => {
+                  event.preventDefault();
+                  if (!deploying) setIsDropActive(true);
+                }}
+                onDragOver={event => event.preventDefault()}
+                onDragLeave={() => setIsDropActive(false)}
+                onDrop={handleComposeDrop}
+                className={`terminal-dark-preserve relative flex flex-1 flex-col overflow-hidden rounded-2xl border bg-[#06090e] transition ${
+                  isDropActive ? 'border-indigo-400 ring-2 ring-indigo-400/30' : 'border-slate-800'
+                }`}
+              >
+                {isDropActive && (
+                  <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-950/90 text-indigo-200">
+                    <Upload className="h-8 w-8" />
+                    <span className="text-sm font-semibold">松开即可导入 Compose 配置</span>
+                    <span className="text-xs text-slate-400">仅支持 .yml / .yaml 文件</span>
+                  </div>
+                )}
                 <textarea
                   value={yamlContent}
                   onChange={e => setYamlContent(e.target.value)}
                   disabled={deploying}
                   spellCheck={false}
                   className="flex-1 w-full p-4 bg-transparent text-xs font-mono text-emerald-400/90 leading-relaxed resize-none focus:outline-none selection:bg-indigo-500/30"
-                  placeholder="在此粘贴或编写 docker-compose.yml 配置..."
+                  placeholder="在此输入、粘贴或导入 docker-compose.yml 配置..."
                 />
               </div>
             </div>
@@ -236,8 +342,8 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
               </div>
 
               <div className="hidden rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 text-[11px] leading-relaxed text-slate-400 sm:block">
-                💡 <strong className="text-indigo-300">提示：</strong> 您可以直接将 Github 或 Docker Hub 上的任何{' '}
-                <code className="text-slate-200">docker-compose.yml</code> 复制粘贴到左侧编辑器，一键启动。
+                💡 <strong className="text-indigo-300">提示：</strong> 可以导入本地{' '}
+                <code className="text-slate-200">docker-compose.yml</code>，也可以继续粘贴或编写配置后一键启动。
               </div>
             </div>
           )}

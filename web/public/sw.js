@@ -1,13 +1,21 @@
 // Bump this when the embedded shell changes so an older release cannot keep
 // showing stale initialization copy after the backend has been upgraded.
-const CACHE_NAME = 'macbox-shell-v2';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/macbox-mark.svg'];
+const CACHE_NAME = 'macbox-shell-v3';
+const APP_SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/icons/macbox-mark.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-maskable-512.png',
+  '/icons/apple-touch-icon.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
   );
 });
 
@@ -55,7 +63,7 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      if (response.ok) {
+      if (response.ok && response.type === 'basic') {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       }

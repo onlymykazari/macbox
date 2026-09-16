@@ -5,7 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SystemOverview, ConsoleUser, TerminalPrefill } from './types';
 import { api } from './api';
 import { useTheme } from './theme';
-import { Key, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Key, X, CheckCircle2, AlertCircle, WifiOff } from 'lucide-react';
 
 const Storage = lazy(() => import('./pages/Storage').then(({ Storage }) => ({ default: Storage })));
 const Docker = lazy(() => import('./pages/Docker').then(({ Docker }) => ({ default: Docker })));
@@ -23,6 +23,7 @@ export const App: React.FC = () => {
   const [overview, setOverview] = useState<SystemOverview | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [swUpdateReady, setSwUpdateReady] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
   const terminalPrefillSequence = useRef(0);
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null);
@@ -99,6 +100,17 @@ export const App: React.FC = () => {
     return () => {
       window.removeEventListener('macbox-unauthorized', handleUnauthorized);
       window.removeEventListener('macbox-sw-update', handleSWUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
@@ -222,9 +234,16 @@ export const App: React.FC = () => {
       />
 
       {swUpdateReady && (
-        <div className="pwa-update-banner mx-auto mt-3 flex max-w-7xl items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-100" role="status">
-          <span>新版本已经准备好，更新后即可使用最新功能。</span>
-          <button type="button" onClick={applySWUpdate} className="shrink-0 rounded-xl bg-sky-500 px-3 py-2 font-bold text-white transition hover:bg-sky-600">立即更新</button>
+        <div className="pwa-update-banner mx-auto mt-3 flex max-w-6xl flex-col items-stretch gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900 shadow-sm dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-100 sm:flex-row sm:items-center sm:justify-between" role="status">
+          <span className="min-w-0 break-words">新版本已经准备好，更新后即可使用最新功能。</span>
+          <button type="button" onClick={applySWUpdate} className="min-h-11 shrink-0 rounded-xl bg-sky-500 px-4 font-bold text-white transition hover:bg-sky-600">立即更新</button>
+        </div>
+      )}
+
+      {!isOnline && (
+        <div className="mx-auto mt-3 flex w-[calc(100%-1.75rem)] max-w-6xl items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900 shadow-sm dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-100" role="status">
+          <WifiOff className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 break-words">当前处于离线状态。已缓存的界面仍可浏览，设备数据和操作将在恢复网络后可用。</span>
         </div>
       )}
 
@@ -236,9 +255,9 @@ export const App: React.FC = () => {
             : 'pb-32 pt-5 sm:px-6 sm:pb-32 sm:pt-8'
         }`}>
         {error && overview && (
-          <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 text-sm flex items-center justify-between">
-            <span>警告: {error}</span>
-            <button onClick={refreshData} className="underline text-xs hover:text-slate-900 dark:hover:text-white">重新连接</button>
+          <div className="mb-6 flex flex-col items-stretch gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-600 dark:text-rose-300 sm:flex-row sm:items-center sm:justify-between">
+            <span className="min-w-0 break-words">警告: {error}</span>
+            <button onClick={refreshData} className="min-h-11 shrink-0 rounded-xl border border-rose-500/20 px-4 text-xs font-bold hover:bg-rose-500/10 hover:text-slate-900 dark:hover:text-white">重新连接</button>
           </div>
         )}
 
