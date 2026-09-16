@@ -12,13 +12,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 var validProjectName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
-const maxComposeYAMLBytes = 8 << 20
+const (
+	maxComposeYAMLBytes = 8 << 20
+	userComposeRoot     = "/data/appdata/compose"
+)
 
 type composePortService struct {
 	Ports []interface{} `yaml:"ports"`
@@ -164,7 +168,7 @@ func (c *Client) listComposeProjects(ctx context.Context, containers []Container
 	// discovery command successful for that empty state instead of marking a
 	// healthy Docker daemon as degraded because find cannot open a missing
 	// optional directory.
-	findScript := "if [ -d /data/appdata/compose ]; then find /data/appdata/compose -maxdepth 2 -type f -name compose.yaml -o -name docker-compose.yml; fi"
+	findScript := "if [ -d " + userComposeRoot + " ]; then find " + userComposeRoot + " -maxdepth 2 -type f -name compose.yaml -o -name docker-compose.yml; fi"
 	findOut, err := c.vmMgr.Exec(ctx, "sh", "-c", findScript)
 	if err != nil {
 		return nil, fmt.Errorf("扫描 Compose 配置目录失败: %w", err)
@@ -215,12 +219,12 @@ func (c *Client) resolveExistingComposeFile(ctx context.Context, name string) (s
 	}
 
 	// Check user compose directory first
-	userPath := path.Join("/data/appdata/compose", name, "compose.yaml")
+	userPath := path.Join(userComposeRoot, name, "compose.yaml")
 	if _, err := c.vmMgr.Exec(ctx, "test", "-f", userPath); err == nil {
 		return userPath, nil
 	}
 
-	userPathYml := path.Join("/data/appdata/compose", name, "docker-compose.yml")
+	userPathYml := path.Join(userComposeRoot, name, "docker-compose.yml")
 	if _, err := c.vmMgr.Exec(ctx, "test", "-f", userPathYml); err == nil {
 		return userPathYml, nil
 	}
@@ -335,6 +339,45 @@ func (c *Client) restartForPublishedPorts(ctx context.Context, changed bool, out
 	return nil
 }
 
+// restoreComposeAfterPortRestart waits for Docker after Lima has restarted and
+// then reapplies the project. A Compose file is not required to define a
+// restart policy, so relying on the daemon restart can leave an otherwise
+// successful first deployment stopped. It also prevents the UI from observing
+// the short post-restart SSH/Docker gap as a failed project start.
+func (c *Client) restoreComposeAfterPortRestart(ctx context.Context, changed bool, composePath string, out io.Writer) error {
+	if !changed {
+		return nil
+	}
+	if err := c.restartForPublishedPorts(ctx, true, out); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "⏳ 正在等待 Docker 恢复并重新确认项目状态...")
+	var lastOutput string
+	for attempt := 0; attempt < 30; attempt++ {
+		probeOutput, err := c.vmMgr.Exec(ctx, "docker", "info", "--format", "{{.ServerVersion}}")
+		if err == nil {
+			if err := c.vmMgr.ExecStream(ctx, out, "docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans"); err != nil {
+				return fmt.Errorf("虚拟机重启后恢复 Compose 项目失败: %w", err)
+			}
+			fmt.Fprintln(out, "✅ 虚拟机重启后 Compose 项目已恢复")
+			return nil
+		}
+		lastOutput = strings.TrimSpace(probeOutput)
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastOutput != "" {
+		return fmt.Errorf("虚拟机重启后 Docker 未及时就绪: %s", lastOutput)
+	}
+	return fmt.Errorf("虚拟机重启后 Docker 未及时就绪")
+}
+
 func (c *Client) DeployCompose(ctx context.Context, name string, yamlContent string, out io.Writer) error {
 	name = strings.TrimSpace(name)
 	if !validProjectName.MatchString(name) {
@@ -354,8 +397,16 @@ func (c *Client) DeployCompose(ctx context.Context, name string, yamlContent str
 
 	fmt.Fprintf(out, "🚀 开始部署 Docker Compose 项目: %s\n", name)
 
-	// 1. Prepare directory in VM
-	projectDir := path.Join("/data/appdata/compose", name)
+	// 1. Repair the shared root as well as creating the project directory. Older
+	// VM images created the compose directory as root:root/0755, which prevents
+	// the fixed Lima management account (a member of the macbox group) from
+	// creating custom projects. install updates existing directory metadata, so
+	// this also migrates already-provisioned VMs without rebuilding them.
+	if repairOut, err := c.vmMgr.Exec(ctx, "sudo", "install", "-d", "-o", "macbox", "-g", "macbox", "-m", "2770", userComposeRoot); err != nil {
+		fmt.Fprintf(out, "❌ 修复 Compose 项目目录权限失败: %s\n", strings.TrimSpace(repairOut))
+		return fmt.Errorf("修复 Compose 项目目录权限失败: %w", err)
+	}
+	projectDir := path.Join(userComposeRoot, name)
 	if _, err := c.vmMgr.Exec(ctx, "mkdir", "-p", projectDir); err != nil {
 		fmt.Fprintf(out, "❌ 创建项目目录失败: %v\n", err)
 		return err
@@ -381,7 +432,7 @@ func (c *Client) DeployCompose(ctx context.Context, name string, yamlContent str
 		fmt.Fprintf(out, "⚠️ 项目已启动，但登记局域网端口失败: %v\n", err)
 		return err
 	}
-	if err := c.restartForPublishedPorts(ctx, portsChanged, out); err != nil {
+	if err := c.restoreComposeAfterPortRestart(ctx, portsChanged, composePath, out); err != nil {
 		fmt.Fprintf(out, "❌ 项目已启动，但局域网端口尚未生效: %v\n", err)
 		return err
 	}
@@ -395,22 +446,28 @@ func (c *Client) ComposeAction(ctx context.Context, name string, action string, 
 	if err != nil {
 		return err
 	}
-	var composeAction string
+	var composeArgs []string
 	switch action {
 	case "start":
-		composeAction = "start"
+		// `compose start` only works while stopped containers still exist. An
+		// offline project discovered from its YAML may have no containers (for
+		// example after a failed first deployment), so use the idempotent `up`
+		// path that creates missing containers as well as starting existing ones.
+		composeArgs = []string{"up", "-d", "--remove-orphans"}
 		fmt.Fprintf(out, "▶️ 正在启动项目 [%s]...\n", name)
 	case "stop":
-		composeAction = "stop"
+		composeArgs = []string{"stop"}
 		fmt.Fprintf(out, "⏹️ 正在停止项目 [%s]...\n", name)
 	case "restart":
-		composeAction = "restart"
+		// Recreate from the declared configuration so restart also repairs a
+		// project whose container disappeared while its Compose file remained.
+		composeArgs = []string{"up", "-d", "--force-recreate", "--remove-orphans"}
 		fmt.Fprintf(out, "🔄 正在重启项目 [%s]...\n", name)
 	case "down":
-		composeAction = "down"
+		composeArgs = []string{"down"}
 		fmt.Fprintf(out, "🔻 正在停止并下线服务 [%s]...\n", name)
 	case "pull":
-		composeAction = "pull"
+		composeArgs = []string{"pull"}
 		fmt.Fprintf(out, "📦 正在拉取项目最新镜像 [%s]...\n", name)
 	default:
 		return fmt.Errorf("不支持的项目动作: %s", action)
@@ -435,11 +492,12 @@ func (c *Client) ComposeAction(ctx context.Context, name string, action string, 
 		}
 	}
 
-	if err := c.vmMgr.ExecStream(ctx, out, "docker", "compose", "-f", filePath, composeAction); err != nil {
+	commandArgs := append([]string{"docker", "compose", "-f", filePath}, composeArgs...)
+	if err := c.vmMgr.ExecStream(ctx, out, commandArgs...); err != nil {
 		fmt.Fprintf(out, "❌ 操作失败: %v\n", err)
 		return err
 	}
-	if err := c.restartForPublishedPorts(ctx, portsChanged, out); err != nil {
+	if err := c.restoreComposeAfterPortRestart(ctx, portsChanged, filePath, out); err != nil {
 		fmt.Fprintf(out, "❌ 项目操作已完成，但局域网端口尚未生效: %v\n", err)
 		return err
 	}

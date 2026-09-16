@@ -72,6 +72,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/docker/compose", s.handleDockerComposeList)
 	s.mux.HandleFunc("GET /api/docker/compose/{name}", s.adminOnly(s.handleDockerComposeGetYaml))
 	s.mux.HandleFunc("POST /api/docker/compose/deploy", s.adminOnly(s.handleDockerComposeDeploy))
+	s.mux.HandleFunc("POST /api/docker/compose/deploy/stream", s.adminOnly(s.handleDockerComposeDeployStream))
 	s.mux.HandleFunc("POST /api/docker/compose/{name}/action", s.adminOnly(s.handleDockerComposeAction))
 	s.mux.HandleFunc("DELETE /api/docker/compose/{name}", s.adminOnly(s.handleDockerComposeDelete))
 

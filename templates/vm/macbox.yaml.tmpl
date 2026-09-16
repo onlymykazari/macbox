@@ -210,8 +210,9 @@ provision:
         usermod -aG "$group" macboxctl
       fi
     done
-    chown macbox:macbox /data /data/media /data/files /data/downloads /data/photos /data/appdata 2>/dev/null || true
+    chown macbox:macbox /data /data/media /data/files /data/downloads /data/photos /data/appdata /data/appdata/compose 2>/dev/null || true
     chmod 0770 /data /data/media /data/files /data/downloads /data/photos /data/appdata 2>/dev/null || true
+    chmod 2770 /data/appdata/compose 2>/dev/null || true
 
     systemctl restart smbd nmbd || true
     systemctl restart docker || true

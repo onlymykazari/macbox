@@ -31,6 +31,70 @@ export const dockerApi = {  // Docker Overview & Containers
       method: 'POST',
       body: JSON.stringify({ name, yaml }),
     }),
+  deployComposeStream: async (
+    name: string,
+    yaml: string,
+    onLog: (line: string) => void,
+    signal?: AbortSignal,
+  ) => {
+    const response = await fetch(`${BASE_URL}/docker/compose/deploy/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, yaml }),
+      signal,
+    });
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent('macbox-unauthorized'));
+    }
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(payload.error || '无法建立部署日志连接');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let completed = false;
+    let streamError = '';
+
+    const processFrame = (frame: string) => {
+      let event = 'message';
+      const data: string[] = [];
+      for (const rawLine of frame.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+      }
+      const value = data.join('\n');
+      if (event === 'done') {
+        completed = true;
+      } else if (event === 'error') {
+        try {
+          streamError = JSON.parse(value).error || 'Compose 部署失败';
+        } catch {
+          streamError = value || 'Compose 部署失败';
+        }
+      } else if (value) {
+        onLog(value);
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        processFrame(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) processFrame(buffer);
+    if (streamError) throw new Error(streamError);
+    if (!completed) throw new Error('部署连接已结束，但服务端没有返回完成确认');
+  },
   composeAction: (name: string, action: 'start' | 'stop' | 'restart' | 'down' | 'pull') =>
     fetchJSON<{ status: string; output: string }>(`${BASE_URL}/docker/compose/${name}/action`, {
       method: 'POST',

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Play, Terminal, Sparkles, AlertCircle, RefreshCw, FileCode } from 'lucide-react';
 import { PRESET_COMPOSE_TEMPLATES, ComposeTemplate } from './types';
 import { api } from '../../api';
@@ -26,6 +26,8 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
   const [deploying, setDeploying] = useState(false);
   const [logs, setLogs] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const logOutputRef = useRef<HTMLPreElement | null>(null);
+  const deployAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -42,6 +44,14 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
     setLogs('');
     setErrorMsg(null);
   }, [initialProject, isOpen]);
+
+  useEffect(() => {
+    if (logOutputRef.current) {
+      logOutputRef.current.scrollTop = logOutputRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  useEffect(() => () => deployAbortRef.current?.abort(), []);
 
   if (!isOpen) return null;
 
@@ -67,17 +77,28 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
     setDeploying(true);
     setLogs(`🚀 正在向底层引擎提交 Compose 项目 [${projectName}] ...\n`);
 
+    const controller = new AbortController();
+    deployAbortRef.current?.abort();
+    deployAbortRef.current = controller;
+
     try {
-      const res = await api.deployCompose(projectName.trim(), yamlContent);
-      setLogs(prev => prev + (res.logs || '项目已成功创建并启动！\n'));
+      await api.deployComposeStream(
+        projectName.trim(),
+        yamlContent,
+        line => setLogs(previous => `${previous}${line}\n`),
+        controller.signal,
+      );
+      setLogs(previous => `${previous}✅ 项目已成功创建并启动！\n`);
       setTimeout(() => {
         onSuccess();
         onClose();
       }, 1500);
     } catch (err: any) {
+	  if (controller.signal.aborted) return;
       setErrorMsg(`部署失败: ${err.message}`);
       setLogs(prev => prev + `\n❌ 部署遇到错误: ${err.message}\n`);
     } finally {
+      if (deployAbortRef.current === controller) deployAbortRef.current = null;
       setDeploying(false);
     }
   };
@@ -168,7 +189,11 @@ export const ComposeDeployModal: React.FC<ComposeDeployModalProps> = ({
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>部署输出日志</span>
                 </div>
-                <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
+                <pre
+                  ref={logOutputRef}
+                  aria-live="polite"
+                  className="max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-slate-300 scroll-smooth"
+                >
                   {logs}
                 </pre>
               </div>

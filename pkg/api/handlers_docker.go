@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/lulalulaluobo/macbox/pkg/docker"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/lulalulaluobo/macbox/pkg/docker"
 )
 
 // Docker Handlers
@@ -213,6 +215,41 @@ func (s *Server) handleDockerComposeDeploy(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleDockerComposeDeployStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "当前连接不支持实时部署日志")
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+		YAML string `json:"yaml"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if !s.beginDockerOperation(w) {
+		return
+	}
+	defer s.endDockerOperation()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher.Flush()
+
+	sw := &appSSEWriter{w: w, flusher: flusher}
+	if err := s.dockerClient.DeployCompose(r.Context(), req.Name, req.YAML, sw); err != nil {
+		log.Printf("[MacBox] Compose deploy stream failed for %q: %v", req.Name, err)
+		_ = writeSSEEvent(w, flusher, "error", map[string]string{"error": "Compose 部署失败，请查看上方实时日志"})
+		return
+	}
+	_ = writeSSEEvent(w, flusher, "done", map[string]string{"status": "success", "name": req.Name})
+}
+
 func (s *Server) handleDockerComposeAction(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var req struct {
@@ -229,7 +266,12 @@ func (s *Server) handleDockerComposeAction(w http.ResponseWriter, r *http.Reques
 
 	var buf cappedBuffer
 	if err := s.dockerClient.ComposeAction(r.Context(), name, req.Action, &buf); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		detail := buf.String()
+		if detail != "" {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("%v\n%s", err, detail))
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{

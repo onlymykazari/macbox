@@ -55,6 +55,10 @@ func TestGenerateConfigFile(t *testing.T) {
 	if !strings.Contains(string(content), "usermod -aG \"$group\" macboxctl") {
 		t.Fatal("rendered VM config must grant the management user Docker and MacBox data access")
 	}
+	if !strings.Contains(string(content), "chown macbox:macbox /data /data/media /data/files /data/downloads /data/photos /data/appdata /data/appdata/compose") ||
+		!strings.Contains(string(content), "chmod 2770 /data/appdata/compose") {
+		t.Fatal("rendered VM config must make the custom Compose root writable by the MacBox group")
+	}
 	if strings.Contains(string(content), "After=cloud-init.target cloud-final.service") || strings.Contains(string(content), "Wants=cloud-final.service") {
 		t.Fatal("rendered VM config must not create a cloud-init/multi-user boot dependency cycle")
 	}
