@@ -40,6 +40,13 @@ export const storageApi = {  // Storage
 
   // Local Mounts (VirtioFS Direct Passthrough)
   getLocalMounts: () => fetchJSON<LocalMountsResponse>(`${BASE_URL}/storage/mounts`),
+  pickHostDirectory: () => fetchJSON<{
+    status: string;
+    cancelled: boolean;
+    path?: string;
+  }>(`${BASE_URL}/storage/pick-host-directory`, {
+    method: 'POST',
+  }),
   addLocalMount: (mount: Partial<LocalMount>) => fetchJSON<{
     status: string;
     message: string;

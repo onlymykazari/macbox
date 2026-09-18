@@ -12,6 +12,31 @@ import { LocalMountModal } from './settings/LocalMountModal';
 import { StorageBindingModals } from './settings/StorageBindingModals';
 import { useLocalMountSettings } from './settings/useLocalMountSettings';
 
+type ShareDiskSource = 'primary' | 'secondary' | 'passthrough' | 'custom';
+
+const isShareDiskSource = (value: string): value is ShareDiskSource =>
+  value === 'primary' || value === 'secondary' || value === 'passthrough' || value === 'custom';
+
+const resolveShareDiskSource = (rawPath: string, availableTargets: SambaStatus['availableTargets']): ShareDiskSource => {
+  const path = rawPath.trim().replace(/\/+$/, '') || '/';
+  const matchedTarget = (availableTargets || [])
+    .filter((target) => {
+      const targetPath = target.path.trim().replace(/\/+$/, '') || '/';
+      return path === targetPath || path.startsWith(`${targetPath}/`);
+    })
+    .sort((left, right) => right.path.length - left.path.length)[0];
+
+  if (matchedTarget && isShareDiskSource(matchedTarget.source)) {
+    return matchedTarget.source;
+  }
+  return path === '/data' || path.startsWith('/data/') ? 'primary' : 'custom';
+};
+
+const isValidSharePickerPath = (rawPath: string) => {
+  const path = rawPath.trim().replace(/\/+$/, '') || '/';
+  return (path === '/data' || path.startsWith('/data/')) && !path.split('/').includes('..');
+};
+
 export interface StorageSettingsProps {
   configDirty?: boolean;
   onRefreshOverview?: () => void;
@@ -36,7 +61,7 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
   const [shareFormWritable, setShareFormWritable] = useState(true);
   const [shareFormGuestOk, setShareFormGuestOk] = useState(true);
   const [shareFormEnabled, setShareFormEnabled] = useState(true);
-  const [shareFormDiskSource, setShareFormDiskSource] = useState<'primary' | 'secondary' | 'passthrough' | 'custom'>('custom');
+  const [shareFormDiskSource, setShareFormDiskSource] = useState<ShareDiskSource>('custom');
   const [shareActionLoading, setShareActionLoading] = useState<string | null>(null);
   const [copiedShareId, setCopiedShareId] = useState<string | null>(null);
   const [restartingSamba, setRestartingSamba] = useState(false);
@@ -76,6 +101,7 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
     newMountGuestTarget,
     newMountWritable,
     mountsLoading,
+    pickingHostDirectory,
     loadLocalMounts,
     setShowAddMountModal,
     setShowMountManager,
@@ -87,6 +113,7 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
     openAddMount,
     selectMountCandidate,
     handleAddCustomMount,
+    handlePickHostDirectory,
     handleDeleteMount,
     handleToggleMountWritable,
     handleToggleMount,
@@ -277,17 +304,15 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
   };
 
   const openSharePathPicker = () => {
-    const startPath = shareFormPath || '/data';
+    const requestedPath = shareFormPath.trim();
+    const startPath = isValidSharePickerPath(requestedPath) ? requestedPath : '/data';
     setShowSharePathPicker(true);
-    loadSharePickerFolders(startPath);
+    void loadSharePickerFolders(startPath);
   };
 
   const confirmSharePickerPath = () => {
     setShareFormPath(sharePickerPath);
-    const matchedTarget = samba?.availableTargets?.find((target) =>
-      sharePickerPath === target.path || sharePickerPath.startsWith(`${target.path}/`)
-    );
-    setShareFormDiskSource((matchedTarget?.source as typeof shareFormDiskSource) || (sharePickerPath.startsWith('/data') ? 'primary' : 'custom'));
+    setShareFormDiskSource(resolveShareDiskSource(sharePickerPath, samba?.availableTargets));
     if (!shareFormName.trim()) {
       const leaf = sharePickerPath.split('/').filter(Boolean).pop() || 'MacBox';
       setShareFormName(leaf.replace(/[^a-zA-Z0-9_-]/g, '-') || 'MacBox');
@@ -303,8 +328,13 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
     setShareFormWritable(share.writable);
     setShareFormGuestOk(share.guestOk);
     setShareFormEnabled(share.enabled);
-    setShareFormDiskSource((share.diskSource as any) || 'custom');
+    setShareFormDiskSource(resolveShareDiskSource(share.path, samba?.availableTargets));
     setShowShareModal(true);
+  };
+
+  const handleShareFormPathChange = (path: string) => {
+    setShareFormPath(path);
+    setShareFormDiskSource(resolveShareDiskSource(path, samba?.availableTargets));
   };
 
   const handleSaveShare = async (e: React.FormEvent) => {
@@ -313,6 +343,8 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
 
     setShareActionLoading('save');
     try {
+      const diskSource = resolveShareDiskSource(shareFormPath, samba?.availableTargets);
+      if (diskSource !== shareFormDiskSource) setShareFormDiskSource(diskSource);
       await api.addOrUpdateSMBShare({
         id: editingShare?.id,
         name: shareFormName.trim(),
@@ -321,7 +353,7 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
         writable: shareFormWritable,
         guestOk: shareFormGuestOk,
         enabled: shareFormEnabled,
-        diskSource: shareFormDiskSource,
+        diskSource,
       });
 
       const updatedSamba = await api.getSambaStatus();
@@ -503,6 +535,7 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
         sharePickerLoading={sharePickerLoading}
         onCloseShareModal={() => setShowShareModal(false)}
         onShareFormNameChange={setShareFormName}
+        onShareFormPathChange={handleShareFormPathChange}
         onShareFormPathPicker={openSharePathPicker}
         onShareFormCommentChange={setShareFormComment}
         onShareFormWritableChange={setShareFormWritable}
@@ -543,10 +576,12 @@ export const StorageSettings: React.FC<StorageSettingsProps> = ({ configDirty, o
         guestTarget={newMountGuestTarget}
         writable={newMountWritable}
         loading={mountsLoading}
+        pickingHostDirectory={pickingHostDirectory}
         onClose={() => setShowAddMountModal(false)}
         onSubmit={handleAddCustomMount}
         onSelectCandidate={selectMountCandidate}
         onPathChange={setNewMountPath}
+        onPickHostDirectory={() => void handlePickHostDirectory()}
         onNameChange={setNewMountName}
         onCategoryChange={setNewMountCategory}
         onGuestTargetChange={setNewMountGuestTarget}

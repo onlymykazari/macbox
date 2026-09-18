@@ -21,6 +21,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/vm/restart", s.adminOnly(s.handleVMRestart))
 	s.mux.HandleFunc("GET /api/vm/config", s.handleVMConfigGet)
 	s.mux.HandleFunc("POST /api/vm/config", s.adminOnly(s.handleVMConfigUpdate))
+	s.mux.HandleFunc("GET /api/vm/listening-ports", s.adminOnly(s.handleVMListeningPorts))
+	s.mux.HandleFunc("GET /api/vm/port-forwards", s.adminOnly(s.handleVMPortForwardsList))
+	s.mux.HandleFunc("POST /api/vm/port-forwards", s.adminOnly(s.handleVMPortForwardPublish))
+	s.mux.HandleFunc("DELETE /api/vm/port-forwards/{port}", s.adminOnly(s.handleVMPortForwardRemove))
 	s.mux.HandleFunc("GET /api/jobs", s.adminOnly(s.handleJobsList))
 	s.mux.HandleFunc("GET /api/jobs/{id}", s.adminOnly(s.handleJobGet))
 	s.mux.HandleFunc("POST /api/jobs/{id}/cancel", s.adminOnly(s.handleJobCancel))
@@ -37,6 +41,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/storage/mounts/{id}/toggle", s.adminOnly(s.handleStorageMountsToggle))
 	s.mux.HandleFunc("POST /api/storage/mounts/{id}/writable", s.adminOnly(s.handleStorageMountsWritable))
 	s.mux.HandleFunc("DELETE /api/storage/mounts/{id}", s.adminOnly(s.handleStorageMountsDelete))
+	s.mux.HandleFunc("POST /api/storage/pick-host-directory", s.adminOnly(s.handleStoragePickHostDirectory))
 	// Remote cloud drives. Login is a short-lived web QR flow; credentials are
 	// only accepted by the server after the provider confirms the session.
 	s.mux.HandleFunc("POST /api/storage/cloud-auth/quark/qr", s.adminOnly(s.handleQuarkQRBegin))

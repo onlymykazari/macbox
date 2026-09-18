@@ -9,6 +9,7 @@ import (
 
 	"github.com/lulalulaluobo/macbox/pkg/auth"
 	"github.com/lulalulaluobo/macbox/pkg/config"
+	"github.com/lulalulaluobo/macbox/pkg/docker"
 	"github.com/lulalulaluobo/macbox/pkg/vm"
 )
 
@@ -259,6 +260,29 @@ func TestPrivilegedRoutesRejectRegularUsers(t *testing.T) {
 	}
 }
 
+func TestComposeDeleteRouteRequiresAdmin(t *testing.T) {
+	server := &Server{mux: http.NewServeMux()}
+	server.registerRoutes()
+	request := requestWithUser(&auth.User{ID: "u-user", Role: "user", Enabled: true})
+	request.Method = http.MethodDelete
+	request.URL.Path = "/api/docker/compose/example"
+	response := httptest.NewRecorder()
+	server.mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("regular user Compose delete status = %d, want 403", response.Code)
+	}
+}
+
+func TestComposeDeleteErrorStatus(t *testing.T) {
+	if got := dockerComposeDeleteErrorStatus(docker.ErrSystemComposeProject); got != http.StatusConflict {
+		t.Fatalf("system Compose delete status = %d, want 409", got)
+	}
+	if got := dockerComposeDeleteErrorStatus(context.DeadlineExceeded); got != http.StatusInternalServerError {
+		t.Fatalf("generic Compose delete status = %d, want 500", got)
+	}
+}
+
 func TestHandlerRejectsUnapprovedOrigin(t *testing.T) {
 	server := &Server{
 		mux:            http.NewServeMux(),
@@ -311,6 +335,25 @@ func TestAuthSetupRejectsNonLoopbackRequest(t *testing.T) {
 
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("remote setup status = %d, want 403", response.Code)
+	}
+}
+
+func TestHostDirectoryPickerRejectsNonLoopbackRequest(t *testing.T) {
+	server := &Server{mux: http.NewServeMux()}
+	server.registerRoutes()
+
+	request := requestWithUser(&auth.User{
+		ID:      "u-admin",
+		Role:    "admin",
+		Enabled: true,
+	})
+	request.URL.Path = "/api/storage/pick-host-directory"
+	request.RemoteAddr = "192.0.2.10:1234"
+	response := httptest.NewRecorder()
+	server.mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("remote host directory picker status = %d, want 403", response.Code)
 	}
 }
 

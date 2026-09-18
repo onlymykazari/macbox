@@ -1,0 +1,7 @@
+services:
+  web:
+    image: nginx:alpine
+    container_name: macbox-port-forward-test
+    restart: unless-stopped
+    ports:
+      - "18080:80"

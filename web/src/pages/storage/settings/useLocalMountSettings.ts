@@ -28,6 +28,7 @@ export function useLocalMountSettings({
   const [newMountGuestTarget, setNewMountGuestTarget] = useState('media/MacMedia');
   const [newMountWritable, setNewMountWritable] = useState(false);
   const [mountsLoading, setMountsLoading] = useState(false);
+  const [pickingHostDirectory, setPickingHostDirectory] = useState(false);
 
   const loadLocalMounts = async () => {
     const mountsRes = await api.getLocalMounts().catch(() => ({ mounts: [], recommended: [], candidates: [], health: [] }));
@@ -152,6 +153,24 @@ export function useLocalMountSettings({
     }
   };
 
+  const handlePickHostDirectory = async () => {
+    setPickingHostDirectory(true);
+    try {
+      const result = await api.pickHostDirectory();
+      if (result.cancelled || !result.path) return;
+
+      setNewMountPath(result.path);
+      if (!newMountName.trim()) {
+        const leaf = result.path.split('/').filter(Boolean).pop();
+        if (leaf) setNewMountName(leaf);
+      }
+    } catch (err: any) {
+      onAlert({ type: 'error', text: `选择本机目录失败: ${err.message}` });
+    } finally {
+      setPickingHostDirectory(false);
+    }
+  };
+
   const openAddMount = () => {
     setShowMountManager(false);
     setNewMountGuestTarget('media/MacMedia');
@@ -170,6 +189,7 @@ export function useLocalMountSettings({
     newMountGuestTarget,
     newMountWritable,
     mountsLoading,
+    pickingHostDirectory,
     loadLocalMounts,
     setShowAddMountModal,
     setShowMountManager,
@@ -181,6 +201,7 @@ export function useLocalMountSettings({
     openAddMount,
     selectMountCandidate,
     handleAddCustomMount,
+    handlePickHostDirectory,
     handleDeleteMount,
     handleToggleMountWritable,
     handleToggleMount,

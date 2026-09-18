@@ -31,8 +31,9 @@ type Config struct {
 }
 
 type TerminalConfig struct {
-	AISkillsEnabled  bool   `yaml:"aiSkillsEnabled"`
-	AISkillsHostPath string `yaml:"aiSkillsHostPath"`
+	AISkillsEnabled      bool   `yaml:"aiSkillsEnabled"`
+	AISkillsHostPath     string `yaml:"aiSkillsHostPath"`
+	ManualPublishedPorts []int  `yaml:"manualPublishedPorts,omitempty"`
 }
 
 type SystemConfig struct {
@@ -172,6 +173,24 @@ func NormalizeForwardedPorts(ports []int) []int {
 	}
 	sort.Ints(clean)
 	return clean
+}
+
+// NormalizeManualPublishedPorts keeps only valid ports that are also present
+// in the VM forwarding list. Manual ownership is intentionally narrower than
+// the forwarding list because Docker and built-in services also contribute
+// forwarding entries.
+func NormalizeManualPublishedPorts(manualPorts, forwardedPorts []int) []int {
+	forwarded := make(map[int]struct{}, len(forwardedPorts))
+	for _, port := range NormalizeForwardedPorts(forwardedPorts) {
+		forwarded[port] = struct{}{}
+	}
+	filtered := make([]int, 0, len(manualPorts))
+	for _, port := range NormalizeForwardedPorts(manualPorts) {
+		if _, ok := forwarded[port]; ok {
+			filtered = append(filtered, port)
+		}
+	}
+	return filtered
 }
 
 const (
@@ -504,6 +523,7 @@ func Parse(data []byte) (*Config, error) {
 		cfg.VM.ForwardedPorts = append([]int(nil), DefaultConfig().VM.ForwardedPorts...)
 	}
 	cfg.VM.ForwardedPorts = NormalizeForwardedPorts(cfg.VM.ForwardedPorts)
+	cfg.Terminal.ManualPublishedPorts = NormalizeManualPublishedPorts(cfg.Terminal.ManualPublishedPorts, cfg.VM.ForwardedPorts)
 	if cfg.Samba.Port < 1 || cfg.Samba.Port > 65535 {
 		cfg.Samba.Port = 4455
 	}

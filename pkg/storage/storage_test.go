@@ -137,6 +137,38 @@ func TestAddOrUpdateLocalMountRejectsGuestPathEscape(t *testing.T) {
 	}
 }
 
+func TestValidateHostDirectory(t *testing.T) {
+	directory := t.TempDir()
+	file := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+		t.Fatalf("create test file: %v", err)
+	}
+
+	if got, err := ValidateHostDirectory(directory + string(filepath.Separator)); err != nil || got != directory {
+		t.Fatalf("ValidateHostDirectory(%q) = %q, %v; want %q", directory+string(filepath.Separator), got, err, directory)
+	}
+	for _, input := range []string{"relative/path", file, filepath.Join(directory, "missing")} {
+		if _, err := ValidateHostDirectory(input); err == nil {
+			t.Errorf("ValidateHostDirectory(%q) accepted an invalid directory", input)
+		}
+	}
+}
+
+func TestHostDirectoryPickerCancellation(t *testing.T) {
+	for _, output := range []string{
+		"execution error: User canceled. (-128)",
+		"execution error: User cancelled. (-128)",
+		"execution error: 用户已取消。(-128)",
+	} {
+		if !isHostDirectoryPickerCancellation(output) {
+			t.Errorf("isHostDirectoryPickerCancellation(%q) = false, want true", output)
+		}
+	}
+	if isHostDirectoryPickerCancellation("execution error: permission denied") {
+		t.Error("permission error was classified as a cancellation")
+	}
+}
+
 func TestValidateStorageTargetDir(t *testing.T) {
 	home := t.TempDir()
 	mountPoint := t.TempDir()

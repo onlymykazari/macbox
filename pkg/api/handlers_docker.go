@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -292,10 +293,20 @@ func (s *Server) handleDockerComposeDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := s.dockerClient.DeleteComposeProject(r.Context(), name, deleteVolumes); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, dockerComposeDeleteErrorStatus(err), err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         "success",
+		"volumesDeleted": deleteVolumes,
+	})
+}
+
+func dockerComposeDeleteErrorStatus(err error) int {
+	if errors.Is(err, docker.ErrSystemComposeProject) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 // Docker Networks & Mirrors Handlers

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crown, Maximize2, Minimize2, PanelLeft, PanelLeftClose, RefreshCw, Sparkles, User, X } from 'lucide-react';
+import { Crown, Maximize2, Minimize2, PanelLeft, PanelLeftClose, RadioTower, RefreshCw, Sparkles, User, X } from 'lucide-react';
 
 export interface TerminalAICommand {
   label: string;
@@ -15,8 +15,10 @@ interface TerminalToolbarProps {
   loginUser: 'root' | 'default';
   fullscreen: boolean;
   commands: TerminalAICommand[];
+  canPublishService: boolean;
   onToggleSidebar: () => void;
   onReconnect: () => void;
+  onPublishService: () => void;
   onCloseSession: () => void | Promise<void>;
   onSwitchUser: () => void;
   onSendCommand: (command: string) => void;
@@ -32,8 +34,10 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
   loginUser,
   fullscreen,
   commands,
+  canPublishService,
   onToggleSidebar,
   onReconnect,
+  onPublishService,
   onCloseSession,
   onSwitchUser,
   onSendCommand,
@@ -61,9 +65,10 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
       </div>
     </div>
 
-    <div className="grid min-w-0 w-full grid-cols-5 gap-1.5 overflow-hidden lg:flex lg:w-auto lg:items-center">
+    <div className="grid min-w-0 w-full grid-cols-3 gap-1.5 overflow-hidden sm:grid-cols-6 lg:flex lg:w-auto lg:items-center">
       <button type="button" onClick={onReconnect} className="flex h-9 min-w-0 items-center justify-center gap-1 rounded-lg bg-slate-800 px-1.5 text-[10px] font-semibold text-slate-200 transition hover:bg-sky-600 lg:shrink-0 lg:px-2.5 lg:text-[11px]" title="清除旧会话并重新连接虚拟机终端"><RefreshCw className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{sessionClosed ? '重开' : '重连'}</span></button>
       <button type="button" onClick={() => void onCloseSession()} disabled={!connected && !sessionId} className="flex h-9 min-w-0 items-center justify-center gap-1 rounded-lg bg-slate-800 px-1.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-900/60 disabled:opacity-40 lg:shrink-0 lg:px-2.5 lg:text-[11px]" title="关闭当前终端会话"><X className="h-3.5 w-3.5 shrink-0" /><span className="truncate">关闭</span></button>
+      {canPublishService && <button type="button" onClick={onPublishService} className="flex h-9 min-w-0 items-center justify-center gap-1 rounded-lg border border-sky-400/30 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-200 transition hover:bg-sky-400/20 lg:shrink-0 lg:px-2.5 lg:text-[11px]" title="发现并发布 VM 内的 Web 服务端口"><RadioTower className="h-3.5 w-3.5 shrink-0" /><span className="truncate">发布服务</span></button>}
       <span className="mx-0.5 hidden h-5 w-px shrink-0 bg-slate-700/80 lg:block" aria-hidden="true" />
       <span className="hidden shrink-0 px-1 text-[10px] font-bold uppercase tracking-wide text-violet-300 lg:inline" title="以下命令会跳过 AI 工具的安全审批，请仅在可信环境使用">AI 高权限</span>
       {commands.map((item) => <button key={item.label} onClick={() => onSendCommand(item.command)} disabled={!connected} className="flex h-9 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-violet-500/30 bg-violet-500/15 px-1.5 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-500/25 disabled:opacity-40 lg:shrink-0 lg:px-2.5 lg:text-[11px]" title={item.title}><Sparkles className="h-3 w-3 shrink-0 text-violet-300" /><span className="truncate">{item.label}</span></button>)}

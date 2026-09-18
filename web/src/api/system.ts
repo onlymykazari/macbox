@@ -1,4 +1,4 @@
-import type { SystemOverview, SystemDiagnostics, PowerStatus, ServiceStatus, VMConfigInfo, VMPrerequisites, BackgroundJob, SystemUser, SSHConfig, SSHKeyGenerationResult } from '../types';
+import type { SystemOverview, SystemDiagnostics, PowerStatus, ServiceStatus, VMConfigInfo, VMPrerequisites, BackgroundJob, SystemUser, SSHConfig, SSHKeyGenerationResult, VMListeningPortsResponse, VMPortForwardsResponse } from '../types';
 import { BASE_URL, fetchJSON } from './client';
 
 export const systemApi = {  // System Overview
@@ -11,6 +11,15 @@ export const systemApi = {  // System Overview
   startVM: () => fetchJSON<{ status: string; message: string; jobId: string }>(`${BASE_URL}/vm/start`, { method: 'POST' }),
   stopVM: () => fetchJSON<{ status: string; message: string; jobId: string }>(`${BASE_URL}/vm/stop`, { method: 'POST' }),
   restartVM: () => fetchJSON<{ status: string; message: string; jobId: string }>(`${BASE_URL}/vm/restart`, { method: 'POST' }),
+  getVMListeningPorts: () => fetchJSON<VMListeningPortsResponse>(`${BASE_URL}/vm/listening-ports`),
+  getVMPortForwards: () => fetchJSON<VMPortForwardsResponse>(`${BASE_URL}/vm/port-forwards`),
+  publishVMPort: (port: number) => fetchJSON<{ status: string; port: number; source?: 'manual' | 'managed'; jobId?: string }>(`${BASE_URL}/vm/port-forwards`, {
+    method: 'POST',
+    body: JSON.stringify({ port }),
+  }),
+  removeVMPortForward: (port: number) => fetchJSON<{ status: string; port: number; jobId?: string }>(`${BASE_URL}/vm/port-forwards/${encodeURIComponent(port)}`, {
+    method: 'DELETE',
+  }),
 
   // Power Management (Caffeinate)
   getPowerStatus: () => fetchJSON<PowerStatus>(`${BASE_URL}/system/power`),

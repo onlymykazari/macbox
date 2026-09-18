@@ -11,15 +11,17 @@ import type { TerminalShortcut } from './terminal/TerminalFileBrowser';
 import { TerminalFileModals } from './terminal/TerminalFileModals';
 import type { TerminalEditingFile } from './terminal/TerminalFileModals';
 import { TerminalToolbar } from './terminal/TerminalToolbar';
+import { ServicePublishModal } from './terminal/ServicePublishModal';
 import { TerminalViewport } from './terminal/TerminalViewport';
 import { useTerminalSession } from './terminal/useTerminalSession';
 import { useTerminalLayout } from './terminal/useTerminalLayout';
 
 interface TerminalPageProps {
   prefill?: TerminalPrefill | null;
+  isAdmin?: boolean;
 }
 
-export const TerminalPage: React.FC<TerminalPageProps> = ({ prefill = null }) => {
+export const TerminalPage: React.FC<TerminalPageProps> = ({ prefill = null, isAdmin = false }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const {
     xtermInstance,
@@ -36,6 +38,7 @@ export const TerminalPage: React.FC<TerminalPageProps> = ({ prefill = null }) =>
   } = useTerminalSession({ terminalRef });
   const [fullscreen, setFullscreen] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showServicePublish, setShowServicePublish] = useState(false);
 
   // File System State
   const [currentPath, setCurrentPath] = useState<string>('/data');
@@ -365,12 +368,14 @@ export const TerminalPage: React.FC<TerminalPageProps> = ({ prefill = null }) =>
             loginUser={loginUser}
             fullscreen={fullscreen}
             commands={aiCommands}
+            canPublishService={isAdmin}
             onToggleSidebar={() => {
               const next = !showSidebar;
               setShowSidebar(next);
               if (next && files.length === 0) void loadFiles(currentPath);
             }}
             onReconnect={handleReconnect}
+            onPublishService={() => setShowServicePublish(true)}
             onCloseSession={handleCloseSession}
             onSwitchUser={() => handleSwitchUser(loginUser === 'root' ? 'default' : 'root')}
             onSendCommand={(command) => sendToTerminal(`${command}\n`)}
@@ -404,6 +409,13 @@ export const TerminalPage: React.FC<TerminalPageProps> = ({ prefill = null }) =>
         onEditContent={(content) => setEditingFile((file) => file ? { ...file, content } : file)}
         onSaveFile={handleSaveFile}
       />
+
+      {showServicePublish && (
+        <ServicePublishModal
+          onClose={() => setShowServicePublish(false)}
+          onReconnect={handleReconnect}
+        />
+      )}
     </div>
   );
 };

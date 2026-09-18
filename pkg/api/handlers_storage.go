@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/lulalulaluobo/macbox/pkg/config"
 	"github.com/lulalulaluobo/macbox/pkg/storage"
@@ -205,6 +206,42 @@ func (s *Server) handleStorageMountsList(w http.ResponseWriter, r *http.Request)
 		log.Printf("[MacBox Storage] local mount probe failed: %v", probeErr)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleStoragePickHostDirectory(w http.ResponseWriter, r *http.Request) {
+	if !s.isLoopbackRequest(r) {
+		writeError(w, http.StatusForbidden, "本机目录选择仅允许在 MacBox 主机本机执行")
+		return
+	}
+
+	selectedPath, cancelled, err := storage.PickHostDirectory(r.Context())
+	if cancelled {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":    "cancelled",
+			"cancelled": true,
+		})
+		return
+	}
+	if err != nil {
+		if errors.Is(err, storage.ErrHostDirectoryPickerUnsupported) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "打开本机目录选择器失败")
+		return
+	}
+
+	cleanPath, err := storage.ValidateHostDirectory(selectedPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "success",
+		"cancelled": false,
+		"path":      cleanPath,
+	})
 }
 
 func (s *Server) handleStorageMountsAdd(w http.ResponseWriter, r *http.Request) {

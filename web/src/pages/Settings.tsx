@@ -13,6 +13,7 @@ import { SSHKeyModals } from './settings/SSHKeyModals';
 import { useConsoleUserSettings } from './settings/useConsoleUserSettings';
 import { SettingsAlert, SettingsHeader, SettingsAlertMessage } from './settings/SettingsHeader';
 import { BackupRestoreSection } from './settings/BackupRestoreSection';
+import { ServicePublishingSection } from './settings/ServicePublishingSection';
 
 interface SettingsProps {
   primaryIP?: string;
@@ -553,6 +554,8 @@ export const Settings: React.FC<SettingsProps> = ({
           }}
         />
       )}
+
+      {activeSubTab === 'service_publish' && currentUser?.role === 'admin' && <ServicePublishingSection />}
 
       {activeSubTab === 'appearance' && (
         <AppearanceSettingsSection theme={theme} onThemeChange={setTheme} />

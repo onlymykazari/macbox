@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,11 @@ const (
 	maxComposeYAMLBytes = 8 << 20
 	userComposeRoot     = "/data/appdata/compose"
 )
+
+// ErrSystemComposeProject marks the built-in Compose projects whose files are
+// owned by MacBox and therefore cannot be removed through the user project
+// deletion API.
+var ErrSystemComposeProject = errors.New("内置 Compose 项目不可删除编排配置")
 
 type composePortService struct {
 	Ports []interface{} `yaml:"ports"`
@@ -168,17 +174,12 @@ func (c *Client) listComposeProjects(ctx context.Context, containers []Container
 	// discovery command successful for that empty state instead of marking a
 	// healthy Docker daemon as degraded because find cannot open a missing
 	// optional directory.
-	findScript := "if [ -d " + userComposeRoot + " ]; then find " + userComposeRoot + " -maxdepth 2 -type f -name compose.yaml -o -name docker-compose.yml; fi"
+	findScript := "if [ -d " + userComposeRoot + " ]; then find " + userComposeRoot + " -maxdepth 2 -type f \\( -name compose.yaml -o -name docker-compose.yml \\); fi"
 	findOut, err := c.vmMgr.Exec(ctx, "sh", "-c", findScript)
 	if err != nil {
 		return nil, fmt.Errorf("扫描 Compose 配置目录失败: %w", err)
 	}
-	lines := strings.Split(findOut, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+	for _, line := range discoveredComposeConfigPaths(findOut) {
 		dir := filepath.Dir(line)
 		name := filepath.Base(dir)
 		if _, exists := projectMap[name]; !exists {
@@ -212,21 +213,80 @@ func (c *Client) listComposeProjects(ctx context.Context, containers []Container
 	return results, nil
 }
 
+// composeConfigPaths returns the supported filenames in canonical order. If a
+// project directory contains both files, compose.yaml wins and the legacy
+// docker-compose.yml is ignored for that project.
+func composeConfigPaths(root, name string) []string {
+	projectDir := path.Join(root, name)
+	return []string{
+		path.Join(projectDir, "compose.yaml"),
+		path.Join(projectDir, "docker-compose.yml"),
+	}
+}
+
+func isUserComposeConfigPath(filePath string) bool {
+	cleanPath := path.Clean(filePath)
+	root := path.Clean(userComposeRoot)
+	return strings.HasPrefix(cleanPath, root+"/")
+}
+
+func discoveredComposeConfigPaths(output string) []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		cleanPath := path.Clean(line)
+		base := path.Base(cleanPath)
+		if !isUserComposeConfigPath(cleanPath) || (base != "compose.yaml" && base != "docker-compose.yml") {
+			continue
+		}
+		if _, exists := seen[cleanPath]; exists {
+			continue
+		}
+		seen[cleanPath] = struct{}{}
+		paths = append(paths, cleanPath)
+	}
+	return paths
+}
+
+func composeProjectDeleteTargets(filePath string) ([]string, error) {
+	cleanPath := path.Clean(filePath)
+	if !isUserComposeConfigPath(cleanPath) {
+		return nil, ErrSystemComposeProject
+	}
+	dir := path.Dir(cleanPath)
+	// Remove only the two supported Compose filenames. This prevents a legacy
+	// docker-compose.yml from making a deleted project reappear while leaving
+	// every other user-managed file in the directory untouched.
+	return []string{
+		path.Join(dir, "compose.yaml"),
+		path.Join(dir, "docker-compose.yml"),
+	}, nil
+}
+
+func composeDownArgs(filePath string, deleteVolumes bool) []string {
+	args := []string{"compose", "-f", filePath, "down"}
+	if deleteVolumes {
+		args = append(args, "-v")
+	}
+	return args
+}
+
 func (c *Client) resolveExistingComposeFile(ctx context.Context, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if !validProjectName.MatchString(name) {
 		return "", fmt.Errorf("项目名称只能包含英文字母、数字、下划线或连字符")
 	}
 
-	// Check user compose directory first
-	userPath := path.Join(userComposeRoot, name, "compose.yaml")
-	if _, err := c.vmMgr.Exec(ctx, "test", "-f", userPath); err == nil {
-		return userPath, nil
-	}
-
-	userPathYml := path.Join(userComposeRoot, name, "docker-compose.yml")
-	if _, err := c.vmMgr.Exec(ctx, "test", "-f", userPathYml); err == nil {
-		return userPathYml, nil
+	// Check user compose directory first. compose.yaml is canonical when both
+	// supported filenames exist in the same project directory.
+	for _, userPath := range composeConfigPaths(userComposeRoot, name) {
+		if _, err := c.vmMgr.Exec(ctx, "test", "-f", userPath); err == nil {
+			return userPath, nil
+		}
 	}
 
 	// Check system appdata directory
@@ -506,27 +566,34 @@ func (c *Client) ComposeAction(ctx context.Context, name string, action string, 
 }
 
 func (c *Client) DeleteComposeProject(ctx context.Context, name string, deleteVolumes bool) error {
-	filePath, err := c.ensureComposeFile(ctx, name)
+	filePath, err := c.resolveExistingComposeFile(ctx, name)
 	if err != nil {
 		return err
 	}
-	workDir := path.Dir(filePath)
-
-	// Down containers
-	downArgs := []string{"compose", "-f", filePath, "down"}
-	if deleteVolumes {
-		downArgs = append(downArgs, "-v")
+	resolvedFilePath := filePath
+	deletePaths, err := composeProjectDeleteTargets(resolvedFilePath)
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(name))
 	}
-	dockerArgs := append([]string{"docker"}, downArgs...)
+	workDir := path.Dir(resolvedFilePath)
+
+	// This is the explicitly destructive project-level operation. Unlike
+	// ComposeAction("down") and RemoveContainer, it also removes compose.yaml.
+	// Keep those operations separate so users can delete/recreate containers
+	// while retaining the configuration for the next deployment.
+	// Down containers
+	dockerArgs := append([]string{"docker"}, composeDownArgs(resolvedFilePath, deleteVolumes)...)
 	if out, err := c.vmMgr.Exec(ctx, dockerArgs...); err != nil {
 		return fmt.Errorf("停止 Compose 项目失败: %s (%w)", out, err)
 	}
 
 	// Remove only the compose file we resolved. A project directory may contain
 	// user-managed files, so recursive deletion is intentionally not used.
-	if strings.HasPrefix(workDir, "/data/appdata/compose/") {
-		if out, err := c.vmMgr.Exec(ctx, "rm", "-f", filePath); err != nil {
-			return fmt.Errorf("删除 Compose 配置文件失败: %s (%w)", out, err)
+	if isUserComposeConfigPath(resolvedFilePath) {
+		for _, deletePath := range deletePaths {
+			if out, err := c.vmMgr.Exec(ctx, "rm", "-f", deletePath); err != nil {
+				return fmt.Errorf("删除 Compose 配置文件失败: %s (%w)", out, err)
+			}
 		}
 		// Keep the directory only when it still contains user files. rmdir is
 		// non-recursive; failure here is safe and does not invalidate the delete.

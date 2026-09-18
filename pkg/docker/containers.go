@@ -304,6 +304,9 @@ func hasDataBindMount(mounts []containerMount) bool {
 }
 
 func (c *Client) RemoveContainer(ctx context.Context, idOrName string, force bool) error {
+	// Removing a container is intentionally independent from Compose project
+	// deletion. In particular, never remove compose.yaml here; users may want
+	// to edit it and redeploy the project after deleting its containers.
 	idOrName, err := normalizeContainerRef(idOrName)
 	if err != nil {
 		return err

@@ -69,15 +69,16 @@ type LimaInstanceJSON struct {
 }
 
 type Manager struct {
-	cfg          *config.Config
-	instanceName string
-	mu           sync.RWMutex
-	statusMu     sync.Mutex
-	lastError    string
-	vmAction     string // "starting", "stopping", "restarting", "" (idle)
-	configDirty  bool   // true when config changed and VM needs restart
-	cachedStatus *VMStatus
-	cachedAt     time.Time
+	cfg            *config.Config
+	instanceName   string
+	mu             sync.RWMutex
+	statusMu       sync.Mutex
+	lastError      string
+	vmAction       string // "starting", "stopping", "restarting", "" (idle)
+	configDirty    bool   // true when config changed and VM needs restart
+	configRevision uint64 // increments for each config change marked dirty
+	cachedStatus   *VMStatus
+	cachedAt       time.Time
 }
 
 // FindHomebrew returns the Homebrew executable used to install optional host
@@ -235,6 +236,9 @@ func (m *Manager) InstanceName() string {
 func (m *Manager) SetConfigDirty(dirty bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if dirty {
+		m.configRevision++
+	}
 	m.configDirty = dirty
 }
 
@@ -242,6 +246,27 @@ func (m *Manager) IsConfigDirty() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.configDirty
+}
+
+// ConfigDirtyRevision returns the revision of the latest persisted config
+// change. Callers that apply config asynchronously can use it to avoid
+// clearing a newer change made while the VM was restarting.
+func (m *Manager) ConfigDirtyRevision() uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.configRevision
+}
+
+// ClearConfigDirtyIfRevision clears the pending-config marker only when no
+// newer config change has been recorded since revision was captured.
+func (m *Manager) ClearConfigDirtyIfRevision(revision uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.configRevision != revision {
+		return false
+	}
+	m.configDirty = false
+	return true
 }
 
 // AddForwardedPortsChanged records only the host ports explicitly published
@@ -279,8 +304,8 @@ func (m *Manager) AddForwardedPortsChanged(ports ...int) (bool, error) {
 	if !changed {
 		return false, nil
 	}
+	m.SetConfigDirty(true)
 	m.mu.Lock()
-	m.configDirty = true
 	m.cachedStatus = nil
 	m.mu.Unlock()
 	return true, nil
@@ -301,11 +326,12 @@ func (m *Manager) RestartForPortForwarding(ctx context.Context, projectRoot stri
 		return fmt.Errorf("已有虚拟机操作正在进行")
 	}
 	defer m.EndVMAction()
+	dirtyRevision := m.ConfigDirtyRevision()
 
 	if err := m.Restart(ctx, projectRoot); err != nil {
 		return err
 	}
-	m.SetConfigDirty(false)
+	m.ClearConfigDirtyIfRevision(dirtyRevision)
 	return nil
 }
 
@@ -1154,10 +1180,20 @@ func (m *Manager) startInternal(ctx context.Context, projectRoot string) error {
 	}
 
 	if instanceExists || status.Status != "NotCreated" {
+		if err := m.recoverStaleHostAgent(ctx); err != nil {
+			return fmt.Errorf("清理残留 Lima hostagent 失败: %w", err)
+		}
 		if err := m.ValidateDataDiskContext(ctx); err != nil {
 			return err
 		}
 		out, err := runHostCommand(ctx, "limactl", "start", m.instanceName, "--tty=false")
+		if err != nil && limaStartNeedsRecovery(out) {
+			if recoveryErr := m.forceStopLima(ctx); recoveryErr == nil {
+				out, err = runHostCommand(ctx, "limactl", "start", m.instanceName, "--tty=false")
+			} else {
+				return fmt.Errorf("limactl start failed: %s (%w); 自动恢复失败: %v", out, err, recoveryErr)
+			}
+		}
 		if err != nil {
 			return fmt.Errorf("limactl start failed: %s (%w)", out, err)
 		}
@@ -1193,10 +1229,18 @@ func (m *Manager) Stop(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	m.InvalidateCache()
-	out, err := runHostCommand(ctx, "limactl", "stop", m.instanceName)
+	out, err := runHostCommand(ctx, "limactl", "stop", "--tty=false", m.instanceName)
 	m.InvalidateCache()
 	if err != nil {
-		return fmt.Errorf("limactl stop failed: %s (%w)", out, err)
+		if forceErr := m.forceStopLima(ctx); forceErr != nil {
+			return fmt.Errorf("limactl stop failed: %s (%w); 强制恢复也失败: %v", out, err, forceErr)
+		}
+		return nil
+	}
+	if waitErr := m.waitForHostAgentExit(ctx, limaHostAgentCleanupTimeout); waitErr != nil {
+		if forceErr := m.forceStopLima(ctx); forceErr != nil {
+			return fmt.Errorf("limactl stop 后 hostagent 仍未退出: %v; 强制恢复失败: %v", waitErr, forceErr)
+		}
 	}
 	return nil
 }

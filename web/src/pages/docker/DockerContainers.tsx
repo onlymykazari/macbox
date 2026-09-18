@@ -100,7 +100,8 @@ export const DockerContainers: React.FC<DockerContainersProps> = ({ onOpenTermin
 
   const handleConfirmDelete = async () => {
     if (!deleteModalContainer) return;
-    const id = deleteModalContainer.id;
+    const container = deleteModalContainer;
+    const id = container.id;
     setActionLoading(`delete-${id}`);
     try {
       await api.removeContainer(id, forceDelete);
@@ -111,7 +112,12 @@ export const DockerContainers: React.FC<DockerContainersProps> = ({ onOpenTermin
         // from the homepage manager without masking the successful action.
       }
       setDeleteModalContainer(null);
-      setAlertMsg({ type: 'success', text: `容器 ${deleteModalContainer.name} 已成功删除` });
+      setAlertMsg({
+        type: 'success',
+        text: container.project
+          ? `容器 ${container.name} 已删除，Compose 编排配置已保留，可修改后重新部署`
+          : `容器 ${container.name} 已成功删除`,
+      });
       await loadContainers();
     } catch (err: any) {
       setAlertMsg({ type: 'error', text: `删除容器失败: ${err.message}` });
@@ -538,6 +544,13 @@ export const DockerContainers: React.FC<DockerContainersProps> = ({ onOpenTermin
               确定要删除容器 <span className="font-mono font-bold text-slate-900 dark:text-white">"{deleteModalContainer.name}"</span> 吗？
               删除后该容器实例将被移除，已持久化到宿主机挂载目录的数据不受影响。
             </p>
+
+            {deleteModalContainer.project && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                此容器属于 Compose 项目 <span className="font-mono font-semibold">{deleteModalContainer.project}</span>。
+                删除容器不会删除该项目的 compose.yaml；如需删除编排配置，请到“服务编排”中使用“删除 Compose 项目及编排配置”。
+              </div>
+            )}
 
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex items-center space-x-2">
               <input

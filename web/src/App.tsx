@@ -283,7 +283,7 @@ export const App: React.FC = () => {
 
           {activeTab === 'apps' && <Apps />}
 
-          {activeTab === 'terminal' && <TerminalPage prefill={terminalPrefill} />}
+          {activeTab === 'terminal' && <TerminalPage prefill={terminalPrefill} isAdmin={currentUser.role === 'admin'} />}
 
           {activeTab === 'storage_settings' && <StorageSettings mode="storage" configDirty={overview?.configDirty} onRefreshOverview={refreshData} />}
 

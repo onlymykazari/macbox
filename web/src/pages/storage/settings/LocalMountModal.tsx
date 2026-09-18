@@ -13,10 +13,12 @@ interface LocalMountModalProps {
   guestTarget: string;
   writable: boolean;
   loading: boolean;
+  pickingHostDirectory: boolean;
   onClose: () => void;
   onSubmit: (event: React.FormEvent) => void;
   onSelectCandidate: (candidate: LocalMountCandidate) => void;
   onPathChange: (value: string) => void;
+  onPickHostDirectory: () => void;
   onNameChange: (value: string) => void;
   onCategoryChange: (category: MountCategory) => void;
   onGuestTargetChange: (value: string) => void;
@@ -32,10 +34,12 @@ export const LocalMountModal: React.FC<LocalMountModalProps> = ({
   guestTarget,
   writable,
   loading,
+  pickingHostDirectory,
   onClose,
   onSubmit,
   onSelectCandidate,
   onPathChange,
+  onPickHostDirectory,
   onNameChange,
   onCategoryChange,
   onGuestTargetChange,
@@ -66,7 +70,7 @@ export const LocalMountModal: React.FC<LocalMountModalProps> = ({
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="font-bold text-slate-800 dark:text-slate-100">选择本机目录</p>
-                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">显示常用本机目录；外接盘或网络盘请在下方填写路径</p>
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">常用目录可快速选择；外接盘或网络盘也可用右侧按钮选择或直接填写路径</p>
               </div>
               <FolderOpen className="h-4 w-4 text-sky-500" />
             </div>
@@ -89,7 +93,13 @@ export const LocalMountModal: React.FC<LocalMountModalProps> = ({
 
             <div>
               <label className="mb-1 block font-semibold text-slate-700 dark:text-slate-300">Mac 本地文件夹 <span className="text-rose-500">*</span></label>
-              <input type="text" value={path} onChange={(event) => onPathChange(event.target.value)} placeholder="例如：/Users/你的用户名/Downloads" className="w-full rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 font-mono text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 dark:border-sky-500/50 dark:bg-sky-500/10 dark:text-white" />
+              <div className="flex gap-2">
+                <input type="text" value={path} onChange={(event) => onPathChange(event.target.value)} placeholder="例如：/Users/你的用户名/Downloads" className="min-w-0 flex-1 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 font-mono text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 dark:border-sky-500/50 dark:bg-sky-500/10 dark:text-white" />
+                <button type="button" onClick={onPickHostDirectory} disabled={pickingHostDirectory || loading} className="flex shrink-0 items-center gap-1.5 rounded-xl border border-sky-300 bg-white px-3 py-2 text-xs font-semibold text-sky-700 transition hover:border-sky-400 hover:bg-sky-50 disabled:cursor-wait disabled:opacity-60 dark:border-sky-500/50 dark:bg-slate-900 dark:text-sky-300 dark:hover:bg-sky-500/10">
+                  <FolderOpen className={`h-4 w-4 ${pickingHostDirectory ? 'animate-pulse' : ''}`} />
+                  <span>{pickingHostDirectory ? '选择中…' : '选择目录'}</span>
+                </button>
+              </div>
               <p className="mt-1.5 text-[11px] leading-5 text-slate-500 dark:text-slate-400">已选择的目录会以 VirtioFS 直通到 Linux；文件仍保留在 Mac 原位置，不会复制进 MacBox 镜像。未扫描到的目录可在此填写绝对路径。</p>
             </div>
 
