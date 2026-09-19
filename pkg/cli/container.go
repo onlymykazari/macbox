@@ -26,8 +26,47 @@ func newContainerCommand() *cobra.Command {
 		containerLogsCmd(),
 		containerSystemCmd(),
 		containerComposeCmd(),
+		containerModeCmd(),
 	)
 	return root
+}
+
+// containerModeCmd shows or sets container.mode, which engine the Docker
+// handler family should prefer (auto falls back to Apple only when no Docker
+// engine answers).
+func containerModeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mode [auto|apple|docker]",
+		Short: "查看或设置容器引擎偏好（不改动 Docker 引擎选择 dockerMode）",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadCLIConfig()
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				fmt.Printf("container.mode: %s\n", cfg.Container.Mode)
+				return nil
+			}
+			mode := args[0]
+			switch mode {
+			case "auto", "apple", "docker":
+			default:
+				return fmt.Errorf("无效的 mode %q（可选 auto|apple|docker）", mode)
+			}
+			if err := config.Update(cfg, func(updated *config.Config) error {
+				updated.Container.Mode = mode
+				return nil
+			}); err != nil {
+				return err
+			}
+			fmt.Printf("✅ container.mode 已设置为 %s\n", mode)
+			if healthCheck(effectivePort(cfg)) {
+				fmt.Println("⚠️ 运行中的 Web 服务读的是启动时的配置，请执行 macbox web restart 后生效")
+			}
+			return nil
+		},
+	}
 }
 
 // containerComposeCmd manages the experimental mocker bridge that gives the
@@ -66,12 +105,13 @@ func containerComposeCmd() *cobra.Command {
 			}
 			if !enabled {
 				fmt.Println("✅ mocker Compose 兼容层已关闭")
-				return nil
-			}
-			if _, installed := containerengine.MockerCLI(); !installed {
+			} else if _, installed := containerengine.MockerCLI(); !installed {
 				fmt.Println("⚠️ 已开启兼容层，但未检测到 mocker CLI，请执行: brew tap us/tap && brew install mocker")
 			} else {
 				fmt.Println("✅ mocker Compose 兼容层已开启")
+			}
+			if enabled && healthCheck(effectivePort(cfg)) {
+				fmt.Println("⚠️ 运行中的 Web 服务读的是启动时的配置，请执行 macbox web restart 后生效")
 			}
 			return nil
 		}

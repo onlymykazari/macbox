@@ -150,7 +150,53 @@ func newWebCommand() *cobra.Command {
 		},
 	}
 
-	webCmd.AddCommand(start, stop, restart, status)
+	open := &cobra.Command{
+		Use:   "open",
+		Short: "用默认浏览器打开 MacBox Web 控制台",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadCLIConfig()
+			if err != nil {
+				return err
+			}
+			port := effectivePort(cfg)
+			url := fmt.Sprintf("http://127.0.0.1:%d", port)
+			if !healthCheck(port) {
+				fmt.Printf("⚠️ %s 未响应健康检查，可先执行 macbox web start\n", url)
+			}
+			return exec.Command("open", url).Run()
+		},
+	}
+
+	var (
+		logsTail   int
+		logsFollow bool
+	)
+	logs := &cobra.Command{
+		Use:   "logs",
+		Short: "查看后台服务日志 (~/.macbox/macbox.log)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir, err := config.ConfigDir()
+			if err != nil {
+				return err
+			}
+			logPath := filepath.Join(dir, "macbox.log")
+			if _, err := os.Stat(logPath); err != nil {
+				return fmt.Errorf("无法读取日志文件: %w", err)
+			}
+			tailArgs := []string{"-n", strconv.Itoa(logsTail), logPath}
+			if logsFollow {
+				tailArgs = append([]string{"-f"}, tailArgs...)
+			}
+			tailCmd := exec.Command("tail", tailArgs...)
+			tailCmd.Stdout = os.Stdout
+			tailCmd.Stderr = os.Stderr
+			return tailCmd.Run()
+		},
+	}
+	logs.Flags().IntVar(&logsTail, "tail", 100, "显示末尾多少行日志")
+	logs.Flags().BoolVarP(&logsFollow, "follow", "f", false, "持续跟踪输出（Ctrl-C 退出）")
+
+	webCmd.AddCommand(start, stop, restart, status, open, logs)
 	return webCmd
 }
 

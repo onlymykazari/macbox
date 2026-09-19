@@ -55,12 +55,43 @@ func newAutostartCommand() *cobra.Command {
 		},
 	}
 
+	noOpenCmd := &cobra.Command{
+		Use:       "no-open <on|off>",
+		Short:     "开机/启动后是否自动打开网页（on=不打开，off=打开）",
+		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		ValidArgs: []string{"on", "off"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			noOpen := args[0] == "on"
+			cfg, err := loadCLIConfig()
+			if err != nil {
+				return err
+			}
+			if err := config.Update(cfg, func(updated *config.Config) error {
+				updated.System.NoOpen = noOpen
+				return nil
+			}); err != nil {
+				return err
+			}
+			cfg.System.NoOpen = noOpen
+			fmt.Printf("✅ 启动后自动打开网页: %v\n", !noOpen)
+			if status := system.AgentStatus(system.ServiceLabelWeb); status.Installed {
+				// The flag is baked into the plist at install time, so refresh
+				// the agent to match the new preference.
+				if err := autostartEnable(cfg, true, false, false); err != nil {
+					return err
+				}
+				fmt.Println("✅ 已同步更新 Web 自启 LaunchAgent")
+			}
+			return nil
+		},
+	}
+
 	cmd := &cobra.Command{
 		Use:     "autostart",
 		Aliases: []string{"service"},
 		Short:   "管理 LaunchAgent 开机自启（Web 服务与虚拟机分开控制）",
 	}
-	cmd.AddCommand(enable, disable, status)
+	cmd.AddCommand(enable, disable, status, noOpenCmd)
 	return cmd
 }
 
