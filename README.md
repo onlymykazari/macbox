@@ -15,17 +15,17 @@ MacBox 采用 Apache License 2.0 发布，允许个人和组织商用、修改�
 - [▶ YouTube 教程](https://www.youtube.com/watch?v=XUFgOKayQXQ)
 - [▶ 哔哩哔哩教程](https://www.bilibili.com/video/BV17hen6GE3M/?vd_source=cc70909d9757ad74a76ffd8f1ce58103)
 
-## v0.1.2 当前版本功能（2026-09-18）
+## v0.1.3 当前版本功能（2026-09-19）
 
-这是 MacBox 的 0.1.2 版本，继续完善“轻量运行、按需扩展、网页管理”的基础闭环：用户可以把一台闲置 Mac 变成文件中心、应用中心和开发工作台，并通过 VM 内终端继续安装自己的项目。
+这是 MacBox 的 0.1.3 版本，围绕"可脱离菜单栏运维"与"容器引擎灵活性"两条主线：新增完整 `macbox` 命令行工具，优先复用 Mac 上已有的容器引擎，并引入 Apple Container 实验性支持。
 
-### 0.1.2 更新重点
+### 0.1.3 更新重点
 
-- 本机目录直通支持 macOS 原生目录选择；SMB 共享目录支持手动输入和 VM 内目录选择。
-- Web 终端支持服务端口发布、端口转发状态检查和发布后的 VM 恢复流程。
-- 修复 Lima hostagent 残留导致虚拟机重启失败的问题。
-- Docker 容器删除与 Compose 编排配置删除明确分离：删除容器默认保留配置和数据卷，删除项目配置需要单独确认。
-- Compose 项目支持离线配置发现，并明确保护内置项目和宿主机挂载数据。
+- 新增 `macbox` CLI：`web`/`vm` 进程控制、`status`/`doctor` 状态自查、`autostart` 自启管理、`web open`/`web logs`、`container mode` 引擎切换，无菜单栏助手也能完成日常运维。
+- 开机自启拆分为 Web 服务与虚拟机两个独立 LaunchAgent（`com.macbox.web` / `com.macbox.vm`），可分别开关，并支持"启动后不自动打开网页"。
+- 检测到 OrbStack / Docker Desktop 等宿主引擎时直接复用，不再在虚拟机内重复安装 Docker；诊断中心与 Docker 页面按实际引擎来源展示状态。
+- 新增 Apple `container` 引擎基础管理；Compose 能力由实验性 mocker 兼容层提供（默认关闭，定位与限制见"开源许可与致谢"）。
+- 命令执行错误现在附带实际 stderr 明细，界面与日志可直接定位失败原因；修复管理账号在复用宿主引擎的虚拟机内报 `docker 组不存在` 的问题。
 
 ### 主要页面
 
@@ -172,7 +172,7 @@ make dev-backend-lan    # 启动局域网可访问后端
 make test               # 执行后端单元测试
 ```
 
-若通过本地终端 Agent 协助部署，可参考仓库根目录的 [MACBOX_DEPLOYMENT_PROMPT.md](MACBOX_DEPLOYMENT_PROMPT.md) 引导流程。
+若通过本地终端 Agent 协助部署，可参考仓库根目录的 [MACBOX_DEPLOYMENT_PROMPT.md](MACBOX_DEPLOYMENT_PROMPT.md) 引导流程。维护者在改动引擎路由、Compose 兼容层、自启动与部署布局前，请先阅读 [MAINTENANCE.md](MAINTENANCE.md) 中沉淀的关键结论。
 
 ## 局域网边界与安全说明
 
@@ -214,3 +214,10 @@ MacBox 的架构、功能边界和交互设计参考了以下优秀开源项目�
 - [BigBear Dockge](https://github.com/bigbeartechworld/big-bear-dockge) 与 [BigBear CasaOS](https://github.com/bigbeartechworld/big-bear-casaos)：应用模板、Compose 配置和元数据组织方式。
 - [copyparty](https://github.com/9001/copyparty)（MIT）：轻量文件服务、多协议共享和文件操作思路。
 - [SFTPGo](https://github.com/drakkan/sftpgo)（AGPL-3.0-only，并带附加条款）：文件服务能力和存储后端抽象思路。
+- [Apple Container](https://github.com/apple/container)（Apache-2.0）：macOS 原生容器运行时，MacBox 的实验性容器引擎目标。
+- [mocker](https://github.com/us/mocker)（AGPL-3.0）：在 Apple Container 之上提供 `docker compose` 语义的第三方兼容 CLI，MacBox 实验性 Compose 桥接完全依赖它工作。
+
+> [!IMPORTANT]
+> **关于实验性 Apple Container Compose 兼容层**
+> 该功能通过第三方 mocker 将 Compose 操作转译到 Apple Container 执行，本质是一层**脆弱的兼容**：mocker 的行为不受 MacBox 控制，其输出格式、标签语义与 Compose 规范均可能随版本变化。MacBox 只负责接入与错误边界提示，**不会为兼容层本身投入额外的适配和维护成本**。
+> 如果你在 Apple Container 的 Compose 场景遇到问题，请优先向 [mocker](https://github.com/us/mocker) 上游提交 issue，或耐心等待 Apple Container 官方内建 Compose 支持——届时 MacBox 会直接切换到官方能力。在此之前，建议将该开关视为尝鲜功能。
