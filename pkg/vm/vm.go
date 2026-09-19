@@ -1161,13 +1161,24 @@ func (m *Manager) ProbeLocalMounts(ctx context.Context) ([]LocalMountProbe, erro
 // supplementary groups. Lima can keep an existing shell session alive after
 // usermod, so callers that need the new groups should use
 // ExecAsManagementUser, which starts a fresh process with initgroups applied.
+// The docker group is only present when the guest actually installed Docker;
+// host-engine VMs skip it, mirroring the `getent group` guard in the
+// provisioning script.
 func (m *Manager) EnsureRuntimeAccess(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	out, err := m.Exec(ctx, "sudo", "usermod", "-aG", "docker,"+m.guestProductGroup(), m.guestManagementUser())
-	if err != nil {
-		return fmt.Errorf("修复 Lima 管理账号权限失败: %s (%w)", strings.TrimSpace(out), err)
+	var groups []string
+	for _, group := range []string{"docker", m.guestProductGroup()} {
+		if _, err := m.Exec(ctx, "getent", "group", group); err == nil {
+			groups = append(groups, group)
+		}
+	}
+	if len(groups) > 0 {
+		out, err := m.Exec(ctx, "sudo", "usermod", "-aG", strings.Join(groups, ","), m.guestManagementUser())
+		if err != nil {
+			return fmt.Errorf("修复 Lima 管理账号权限失败: %s (%w)", strings.TrimSpace(out), err)
+		}
 	}
 	if _, err := m.ExecAsManagementUser(ctx, "id"); err != nil {
 		return fmt.Errorf("验证 Lima 管理账号权限失败: %w", err)
@@ -1484,7 +1495,7 @@ func runVMCommand(ctx context.Context, instanceName string, stdin io.Reader, com
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
-	return output.String(), err
+	return output.String(), enrichCommandError(err, output.String())
 }
 
 func runHostCommand(ctx context.Context, name string, args ...string) (string, error) {
@@ -1496,7 +1507,37 @@ func runHostCommand(ctx context.Context, name string, args ...string) (string, e
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
-	return output.String(), err
+	return output.String(), enrichCommandError(err, output.String())
+}
+
+// enrichCommandError keeps the original error type (callers use errors.As to
+// detect exec.ExitError) but appends the last lines of merged output so UI
+// errors show what the guest command actually complained about.
+func enrichCommandError(err error, output string) error {
+	if err == nil {
+		return nil
+	}
+	tail := commandErrorTail(output)
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, tail)
+}
+
+func commandErrorTail(output string) string {
+	const maxTailBytes = 400
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var kept []string
+	for i := len(lines) - 1; i >= 0 && len(kept) < 4; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			kept = append([]string{line}, kept...)
+		}
+	}
+	tail := strings.Join(kept, " | ")
+	if len(tail) > maxTailBytes {
+		tail = "…" + tail[len(tail)-maxTailBytes:]
+	}
+	return tail
 }
 
 func resolveCommandPath(name string) string {
