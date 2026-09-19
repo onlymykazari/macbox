@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lulalulaluobo/macbox/pkg/config"
+	"github.com/lulalulaluobo/macbox/pkg/containerengine"
 	"github.com/lulalulaluobo/macbox/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -609,6 +610,23 @@ func (m *Manager) ValidateDataDiskContext(ctx context.Context) error {
 	return nil
 }
 
+// shouldInstallGuestDocker decides whether the rendered Lima config installs
+// Docker inside the guest. With dockerMode "auto" and no existing instance, a
+// running host engine lets a newly created VM stay Docker-free; existing
+// instances keep their original layout because Lima runs provision scripts at
+// creation time.
+func (m *Manager) shouldInstallGuestDocker(snapshot *config.Config, instanceExists bool) bool {
+	if instanceExists || snapshot.VM.DockerMode == "vm" {
+		return true
+	}
+	for _, engine := range containerengine.HostEngines() {
+		if engine.Running && engine.SocketPath != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // GenerateConfig renders templates/vm/macbox.yaml.tmpl into ~/.macbox/macbox.yaml
 func (m *Manager) GenerateConfigFile(tmplPath, outputPath string) error {
 	tmplData, err := os.ReadFile(tmplPath)
@@ -674,6 +692,14 @@ func (m *Manager) GenerateConfigFile(tmplPath, outputPath string) error {
 		}
 	}
 
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return fmt.Errorf("读取用户目录失败: %w", homeErr)
+	}
+	instanceDir := filepath.Join(home, ".lima", instanceName)
+	_, instanceStatErr := os.Stat(instanceDir)
+	instanceExists := instanceStatErr == nil
+
 	data := struct {
 		CPUs             int
 		Memory           int
@@ -685,6 +711,7 @@ func (m *Manager) GenerateConfigFile(tmplPath, outputPath string) error {
 		LocalMounts      []config.LocalMount
 		AISkillsEnabled  bool
 		AISkillsHostPath string
+		InstallDocker    bool
 	}{
 		CPUs:             cpus,
 		Memory:           memory,
@@ -696,6 +723,7 @@ func (m *Manager) GenerateConfigFile(tmplPath, outputPath string) error {
 		LocalMounts:      localMounts,
 		AISkillsEnabled:  cfgSnapshot.Terminal.AISkillsEnabled,
 		AISkillsHostPath: aiSkillsHostPath,
+		InstallDocker:    m.shouldInstallGuestDocker(cfgSnapshot, instanceExists),
 	}
 
 	var buf bytes.Buffer
@@ -713,12 +741,7 @@ func (m *Manager) GenerateConfigFile(tmplPath, outputPath string) error {
 		return fmt.Errorf("读取现有虚拟机配置失败: %w", outputErr)
 	}
 	instancePath := ""
-	home, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		return fmt.Errorf("读取用户目录失败: %w", homeErr)
-	}
-	instanceDir := filepath.Join(home, ".lima", instanceName)
-	if _, err := os.Stat(instanceDir); err == nil {
+	if instanceExists {
 		instancePath = filepath.Join(instanceDir, "lima.yaml")
 	}
 
